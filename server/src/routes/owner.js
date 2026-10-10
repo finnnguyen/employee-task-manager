@@ -2,10 +2,16 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const {authenticateToken, requireOwner} = require('../middleware/auth');
 
 const db = require('../config/firebase');
 const { sendOtpSms } = require('../services/sms');
 
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret || jwtSecret.trim() === '') {
+    throw new Error('JWT_SECRET is missing.');
+}
  
 router.post('/request-otp', async (req, res) => {
     const phone = req.body?.phone;
@@ -22,6 +28,7 @@ router.post('/request-otp', async (req, res) => {
             if (!ownerSnapshot.exists) {
                 return { status: 500, error: 'Owner not found.' };
             }
+
             const ownerData = ownerSnapshot.data();
             if (phone.trim() !== ownerData.phone) {
                 return { status: 401, error: 'Invalid phone number.' };
@@ -90,6 +97,7 @@ router.post('/verify-otp', async (req, res) => {
             if (!ownerSnapshot.exists) {
                 return { status: 500, error: 'Owner not found.' };
             }
+
             const ownerData = ownerSnapshot.data();
             if (phone.trim() !== ownerData.phone) {
                 return { status: 401, error: 'Invalid phone number.' };
@@ -122,11 +130,17 @@ router.post('/verify-otp', async (req, res) => {
             return res.status(verificationResult.status).json({ error: verificationResult.error });
         }
 
-        return res.status(verificationResult.status).json({ message: verificationResult.message });
+        const token = jwt.sign({ role: 'owner' }, jwtSecret, {subject: 'owner', expiresIn: '1h', algorithm: 'HS256' });
+
+        return res.status(verificationResult.status).json({ message: verificationResult.message, token });
+
     } catch (error) {
         console.error('Error verifying OTP:', error);
         return res.status(500).json({ error: 'Internal server error.' });
     }
 });
 
+router.get('/me', authenticateToken, requireOwner, (req, res) => {
+    return res.status(200).json({ role: req.user.role, id: req.user.sub });
+});
 module.exports = router;
